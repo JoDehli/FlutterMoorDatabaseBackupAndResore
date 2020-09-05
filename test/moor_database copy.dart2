@@ -1,0 +1,358 @@
+//import 'package:moor_flutter/moor_flutter.dart';
+
+import 'package:flutter/foundation.dart';
+import 'package:moor/ffi.dart';
+import 'package:moor/moor.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+part 'moor_database.g.dart';
+
+/* 
+ Commands:
+  - flutter packages pub run build_runner watch
+*/
+
+//@DataClassName('Counters')
+class Counter extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 18)();
+  DateTimeColumn get lastEntry => dateTime().nullable()();
+  RealColumn get currenValue => real().withDefault(const Constant(0.0))();
+  IntColumn get colorValue =>
+      integer().withDefault(const Constant(4287349578))();
+  TextColumn get einheit => text().withLength(min: 0, max: 5)();
+}
+
+class ZaehlerEntry extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get zaehlerId => integer().withDefault(const Constant(0))();
+  DateTimeColumn get entryDate => dateTime()();
+  RealColumn get entryValue => real().withDefault(const Constant(0.0))();
+}
+
+LazyDatabase get _openConnection {
+  // the LazyDatabase util lets us find the right location for the file async.
+  return LazyDatabase(() async {
+    // put the database file, called db.sqlite here, into the documents folder
+    // for your app.
+    final dbFolder = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dbFolder.path, 'db.sqlite'));
+    return VmDatabase(file);
+  });
+}
+
+@UseMoor(
+  tables: [Counter, ZaehlerEntry],
+  daos: [ZaehlerDao, EntryDao],
+)
+class AppDatabase extends _$AppDatabase {
+  static AppDatabase instance = AppDatabase._internal();
+
+  ZaehlerDao zaehler;
+  EntryDao entry;
+  AppDatabase._internal() : super(LazyDatabase(() async => _openConnection)) {
+    zaehler = ZaehlerDao(this);
+    entry = EntryDao(this);
+  }
+
+  AppDatabase(DatabaseConnection e, {schemaVersion})
+      : super(LazyDatabase(() async => _openConnection)) {
+    zaehler = ZaehlerDao(this);
+    entry = EntryDao(this);
+  }
+
+  AppDatabase.executor(QueryExecutor db)
+      : this(DatabaseConnection.fromExecutor(db));
+
+  //AppDatabase() : super(_openConnection());
+  @override
+  int get schemaVersion => 1;
+}
+
+@UseDao(
+  tables: [Counter],
+)
+class ZaehlerDao extends DatabaseAccessor<AppDatabase> with _$ZaehlerDaoMixin {
+  final AppDatabase db;
+
+  ZaehlerDao(this.db) : super(db);
+
+  Future<int> anzahlZaehler() async {
+    return (await select(counter).get()).length;
+  }
+
+  Future<List<Insertable<CounterData>>> getAllZaehler() =>
+      select(counter).get();
+  Stream<List<Insertable<CounterData>>> watchAllZaehler() =>
+      select(counter).watch();
+  Future insertCounter(Insertable<CounterData> newCounter) =>
+      into(counter).insert(newCounter);
+  Future updateCounter(Insertable<CounterData> counters) =>
+      update(counter).replace(counters);
+  Future deleteCounter(Insertable<CounterData> counters) =>
+      delete(counter).delete(counters);
+  Future<void> deleteCounterById(int id) async =>
+      delete(counter).where((t) => t.id.equals(id));
+  Future<Insertable<CounterData>> getZaehlerById(int id) =>
+      (select(counter)..where((t) => t.id.equals(id))).getSingle();
+}
+
+@UseDao(tables: [ZaehlerEntry, Counter])
+class EntryDao extends DatabaseAccessor<AppDatabase> with _$EntryDaoMixin {
+  final AppDatabase db;
+
+  EntryDao(this.db) : super(db);
+
+  Future updateCounter(Insertable<CounterData> counters) =>
+      update(counter).replace(counters);
+
+  Future updateEntry(Insertable<ZaehlerEntryData> entries) =>
+      update(zaehlerEntry).replace(entries);
+
+  Future<Insertable<CounterData>> getZaehlerById(int id) =>
+      (select(counter)..where((t) => t.id.equals(id))).getSingle();
+
+  Future<CounterData> getZaehlerByIdAsCouterData(int id) =>
+      (select(counter)..where((t) => t.id.equals(id))).getSingle();
+
+  Future<List<ZaehlerEntryData>> getExport(int id) {
+    final query = (select(zaehlerEntry)
+      ..where((t) => t.zaehlerId.equals(id))
+      ..orderBy(([
+        (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.asc)
+      ])));
+    return query.get();
+
+    // return query.get().then((value) {
+    //   List<String> exp = [];
+    //   value.forEach((element) {
+    //     exp.add(element.entryValue.toString());
+    //   });
+    //   return exp;
+    // });
+  }
+
+  Future<ZaehlerDateAndValue> getLatestDateAndEntryById(int id) {
+    final query = (select(zaehlerEntry)
+      ..where((t) => t.zaehlerId.equals(id))
+      ..limit(1)
+      ..orderBy(([
+        (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+      ])));
+
+    return query.get().then((value) {
+      if (value.length == 1) {
+        return ZaehlerDateAndValue(value[0].entryValue, value[0].entryDate);
+      } else {
+        return Future.value(ZaehlerDateAndValue(0, DateTime.now()));
+      }
+    });
+  }
+
+  Future insertEntry(Insertable<ZaehlerEntryData> newEntry) =>
+      into(zaehlerEntry).insert(newEntry);
+
+  Future<ZaehlerEntryData> getEntryById(int id) =>
+      (select(zaehlerEntry)..where((t) => t.id.equals(id))).getSingle();
+
+  Future<void> deleteEntryById(int entryId) {
+    return (delete(zaehlerEntry)..where((t) => t.id.equals(entryId))).go();
+  }
+
+  Future<void> deleteZaehler(int id) async =>
+      (delete(zaehlerEntry)..where((t) => t.zaehlerId.equals(id))).go();
+
+  Stream<List<Insertable<ZaehlerEntryData>>> watchAllEntries(int id) {
+    return (select(zaehlerEntry)
+          ..orderBy(([
+            (t) =>
+                OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+          ]))
+          ..where((t) => t.zaehlerId.equals(id)))
+        .watch();
+  }
+
+  Future<List<int>> getAllYearsById(int id) {
+    final query = (select(zaehlerEntry)
+      ..where((t) => t.zaehlerId.equals(id))
+      ..orderBy(([
+        (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+      ])));
+    return query.get().then((value) {
+      List<int> res = [];
+      value.forEach((element) {
+        if (res.contains(element.entryDate.year) == false) {
+          res.add(element.entryDate.year);
+        }
+      });
+      return res;
+    });
+  }
+
+  Stream<List<SingleEntry>> watchAllEntriesByYear(
+      int id, int year, List<int> years) {
+    int indexYear = years.indexOf(year);
+    int yearBefore;
+
+    if (years.length <= 1) {
+      yearBefore = year - 1;
+    } else {
+      if (indexYear + 1 < years.length) {
+        yearBefore = years[indexYear + 1] - 1;
+      } else {
+        yearBefore = year - 1;
+      }
+    }
+
+    final query = (select(zaehlerEntry)
+      ..orderBy(([
+        (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+      ]))
+      ..where((t) => t.zaehlerId.equals(id))
+      ..where((tbl) => tbl.entryDate.year.isBetweenValues(yearBefore, year)));
+
+    return query.watch().map((rows) {
+      List<SingleEntry> entries = [];
+      for (var i = 0; i < rows.length; i++) {
+        if (i < rows.length - 1) {
+          entries.add(SingleEntry(
+              rows[i].id,
+              rows[i].entryDate,
+              rows[i].entryValue.roundToDouble(),
+              (rows[i].entryValue - rows[i + 1].entryValue).roundToDouble()));
+        } else {
+          entries.add(SingleEntry(
+              rows[i].id,
+              rows[i].entryDate,
+              rows[i].entryValue.roundToDouble(),
+              rows[i].entryValue.roundToDouble()));
+        }
+      }
+      return entries.where((element) => element.date.year == year).toList();
+    });
+  }
+
+  Future<List<double>> getAllMonthByYear(
+      int id, List<String> years, int tabIndex) {
+    List<double> monthData = [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ];
+
+    if (years.length == 0) {
+      return Future.value(monthData);
+    } else {
+      int year = int.parse(years[tabIndex]);
+      final query = (select(zaehlerEntry)
+        ..orderBy(([
+          (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+        ]))
+        ..where((t) => t.zaehlerId.equals(id))
+        ..where((tbl) => tbl.entryDate.year.isBetweenValues(year - 1, year)));
+      return query.get().then((rows) {
+        for (var i = 0; i < rows.length; i++) {
+          // Prufen ob Monat und Jahr passen
+          if (rows[i].entryDate.month > 0 &&
+              rows[i].entryDate.month <= 12 &&
+              rows[i].entryDate.year == year) {
+            double diff = 0.0;
+            if (i < rows.length - 1) {
+              diff = (rows[i].entryValue - rows[i + 1].entryValue);
+            } else {
+              diff = rows[i].entryValue;
+            }
+
+            monthData[rows[i].entryDate.month - 1] =
+                (monthData[rows[i].entryDate.month - 1] + diff).roundToDouble();
+          }
+        }
+        return monthData;
+      });
+    }
+  }
+
+  Stream<List<double>> watchAllMonthByYear(
+      int id, List<int> years, int tabIndex) {
+    List<double> monthData = [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ];
+    if (years.length == 0 || years.length < tabIndex + 1) {
+      return Stream.fromFuture(
+          Future.value([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+    } else {
+      int year = years[tabIndex];
+      int yearBefore;
+      if (years.length <= 1) {
+        yearBefore = year - 1;
+      } else {
+        if (tabIndex + 1 < years.length) {
+          yearBefore = years[tabIndex + 1] - 1;
+        } else {
+          yearBefore = year - 1;
+        }
+      }
+
+      final query = (select(zaehlerEntry)
+        ..orderBy(([
+          (t) => OrderingTerm(expression: t.entryDate, mode: OrderingMode.desc)
+        ]))
+        ..where((t) => t.zaehlerId.equals(id))
+        ..where((tbl) => tbl.entryDate.year.isBetweenValues(yearBefore, year)));
+      return query.watch().map((rows) {
+        monthData = [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+        ];
+        for (var i = 0; i < rows.length; i++) {
+          // Prufen ob Monat und Jahr passen
+          if (rows[i].entryDate.month > 0 &&
+              rows[i].entryDate.month <= 12 &&
+              rows[i].entryDate.year == year) {
+            double diff = 0.0;
+            if (i < rows.length - 1) {
+              diff = (rows[i].entryValue - rows[i + 1].entryValue);
+            } else {
+              diff = rows[i].entryValue;
+            }
+
+            monthData[rows[i].entryDate.month - 1] =
+                (monthData[rows[i].entryDate.month - 1] + diff).roundToDouble();
+          }
+        }
+        return monthData;
+      });
+    }
+  }
+}
