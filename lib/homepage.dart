@@ -3,6 +3,8 @@ import 'package:moorTest/moor_database.dart';
 import 'package:provider/provider.dart';
 import 'dart:math';
 
+import 'main.dart';
+
 class MyHomePage extends StatefulWidget {
   MyHomePage({Key key, this.title}) : super(key: key);
   final String title;
@@ -13,7 +15,8 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
-    final database = Provider.of<MyDatabase>(context);
+    final dbNotifier = Provider.of<AppDatabaseNotifier>(context);
+    final database = dbNotifier.database;
 
     return Scaffold(
       appBar: AppBar(

@@ -1,12 +1,10 @@
 import 'dart:io';
-import 'package:moor/ffi.dart';
-import 'package:moor/moor.dart' as moor;
 import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
-import 'moor_database.dart';
+import 'main.dart';
 
 class BackupScreen extends StatefulWidget {
   const BackupScreen({Key key}) : super(key: key);
@@ -67,6 +65,7 @@ class _BackupScreenState extends State<BackupScreen> {
   Future<void> _backup() async {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File(p.join(dbFolder.path, 'db.sqlite'));
+    final dbNotifier = Provider.of<AppDatabaseNotifier>(context, listen: false);
 
     final Directory exportDir = await getSafeDir();
     final fileBackup = File(p.join(exportDir.path, 'db_backup.sqlite'));
@@ -74,7 +73,7 @@ class _BackupScreenState extends State<BackupScreen> {
     print(exportDir);
     print(fileBackup);
 
-    final database = Provider.of<MyDatabase>(context, listen: false);
+    final database = dbNotifier.database;
     database.close();
 
     if (await fileBackup.exists()) {
@@ -82,7 +81,8 @@ class _BackupScreenState extends State<BackupScreen> {
     }
     await fileBackup.writeAsBytes(await file.readAsBytes(), flush: true);
 
-    // Open Database again ???
+    // Open Database again
+    dbNotifier.reOpen();
 
     Navigator.pop(context);
   }
